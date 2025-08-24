@@ -1,5 +1,7 @@
 use async_trait::async_trait;
+use deadpool::managed::RecycleResult;
 use ldap3::{Ldap, LdapConnAsync, LdapConnSettings, LdapError};
+use std::future::Future;
 
 pub struct Manager(String, LdapConnSettings);
 pub type Pool = deadpool::managed::Pool<Manager>;
@@ -25,29 +27,38 @@ impl deadpool::managed::Manager for Manager {
     type Type = Ldap;
     type Error = LdapError;
 
-    async fn create(&self) -> Result<Self::Type, Self::Error> {
-        let (conn, ldap) = LdapConnAsync::with_settings(self.1.clone(), &self.0).await?;
-        #[cfg(feature = "default")]
-        ldap3::drive!(conn);
-        #[cfg(feature = "rt-actix")]
-        actix_rt::spawn(async move {
-            if let Err(e) = conn.drive().await {
-                log::warn!("LDAP connection error: {:?}", e);
-            }
-        });
-        Ok(ldap)
+    fn create(&self) -> impl Future<Output = Result<Self::Type, Self::Error>> + Send {
+        async move {
+            let (conn, ldap) = LdapConnAsync::with_settings(self.1.clone(), &self.0).await?;
+            #[cfg(feature = "default")]
+            ldap3::drive!(conn);
+            #[cfg(feature = "rt-actix")]
+            actix_rt::spawn(async move {
+                if let Err(e) = conn.drive().await {
+                    log::warn!("LDAP connection error: {:?}", e);
+                }
+            });
+            Ok(ldap)
+        }
     }
-    async fn recycle(&self, conn: &mut Self::Type) -> deadpool::managed::RecycleResult<Self::Error> {
-        // Revert back to anonymous bind by binding with zero credentials
-        conn.simple_bind("", "").await?;
-        Ok(())
+
+    fn recycle(
+        &self,
+        conn: &mut Self::Type,
+        _: &deadpool::managed::Metrics,
+    ) -> impl Future<Output = RecycleResult<Self::Error>> + Send {
+        async move {
+            // Revert back to anonymous bind by binding with zero credentials
+            conn.simple_bind("", "").await?;
+            Ok(())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn manager_new_sets_url() {
@@ -73,23 +84,20 @@ mod tests {
 
     #[test]
     fn manager_with_connection_settings_returns_manager() {
-        let manager = Manager::new("my_url")
-            .with_connection_settings(
-                LdapConnSettings::new()
-                    .set_conn_timeout(Duration::from_secs(30))
-            );
+        let manager = Manager::new("my_url").with_connection_settings(
+            LdapConnSettings::new().set_conn_timeout(Duration::from_secs(30)),
+        );
         assert!(is_manager(&manager));
     }
 
     #[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
     #[test]
     fn manager_with_connection_settings_updates_settings() {
-        let manager = Manager::new("my_url")
-            .with_connection_settings(
-                LdapConnSettings::new()
-                    .set_conn_timeout(Duration::from_secs(30))
-                    .set_starttls(true)
-            );
+        let manager = Manager::new("my_url").with_connection_settings(
+            LdapConnSettings::new()
+                .set_conn_timeout(Duration::from_secs(30))
+                .set_starttls(true),
+        );
         let default = LdapConnSettings::new();
 
         assert_ne!(manager.1.starttls(), default.starttls());
