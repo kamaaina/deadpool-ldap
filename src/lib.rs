@@ -30,16 +30,14 @@ impl deadpool::managed::Manager for Manager {
     fn create(&self) -> impl Future<Output = Result<Self::Type, Self::Error>> + Send {
         async move {
             let (conn, ldap) = LdapConnAsync::with_settings(self.1.clone(), &self.0).await?;
-            //#[cfg(feature = "default")]
+            #[cfg(feature = "default")]
             ldap3::drive!(conn);
-            /*
             #[cfg(feature = "rt-actix")]
             actix_rt::spawn(async move {
                 if let Err(e) = conn.drive().await {
                     log::warn!("LDAP connection error: {:?}", e);
                 }
             });
-            */
             Ok(ldap)
         }
     }
