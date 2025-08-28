@@ -1,8 +1,8 @@
 [package]
 name = "deadpool-ldap"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Aitor Ruano <codearm@pm.me>"]
-edition = "2018"
+edition = "2024"
 license = "MIT/Apache-2.0"
 description = "LDAP support for the deadpool connection pool"
 repository = "https://github.com/c0dearm/deadpool-ldap"
